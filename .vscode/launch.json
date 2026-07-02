@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Roku Device: Debug",
+      "type": "brightscript",
+      "request": "launch",
+      "consoleOutput": "full",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "build",
+      "retainStagingFolder": true,
+      "stopOnEntry": false,
+      "rootDir": "${workspaceFolder}/build",
+      "sourceDirs": ["${workspaceFolder}/src"],
+      "enableDebuggerAutoRecovery": true,
+      "stopDebuggerOnAppExit": true,
+      "injectRaleTrackerTask": false,
+      "enableDebugProtocol": false
+    },
+    {
+      "name": "brs-engine Simulator: Run",
+      "type": "node",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "internalConsoleOptions": "neverOpen",
+      "console": "integratedTerminal",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
+      "runtimeArgs": ["--root", "${workspaceFolder}/build", "source/Main.brs"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "brs-engine Simulator: Debug (Micro Debugger)",
+      "type": "node",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "internalConsoleOptions": "neverOpen",
+      "console": "integratedTerminal",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
+      "runtimeArgs": ["--root", "${workspaceFolder}/build", "source/Main.brs", "--debug"],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

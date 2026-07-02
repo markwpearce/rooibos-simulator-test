@@ -83,3 +83,27 @@ event-driven entry into `run()`), not to method-call `m`-binding in general.
 
 **Status:** not yet root-caused to a specific line; next step is bisecting `TestRunner.run()`
 (starting by removing the `reporter.onBegin(...)` loop) to find the minimal trigger.
+
+### 2. `brs-node`'s published npm package is missing `read.sh` (breaks `--debug` micro debugger input)
+
+Running `brs-cli --debug` and interacting with the Micro Debugger (or the plain REPL) fails with:
+```
+/bin/sh: <project>/node_modules/brs-node/bin/read.sh: No such file or directory
+The current environment doesn't support interactive reading from TTY.
+```
+
+Root cause: `brs-node` depends on `readline-sync`, which shells out to a sidecar script
+(`read.sh` on POSIX, `read.ps1`/`read.cs.js` on Windows) bundled inside its own package to do
+synchronous raw terminal reads — confirmed present at
+`brs-engine/node_modules/readline-sync/lib/read.sh` in the source monorepo. The webpack bundle
+(`packages/node/bin/brs.node.js`) inlines the *logic* that references `__dirname + '/read.sh'`,
+but the actual helper script never gets copied into `packages/node/bin/` at build time, and
+`packages/node/package.json`'s `"files"` array (`["bin/", "assets/", "types/src/core/", "CHANGELOG.md"]`)
+doesn't reference it either — so it's absent from both the local build output and the published
+npm package. This breaks any interactive terminal input in `brs-cli` (REPL, Micro Debugger
+prompts) wherever `readline-sync` needs its shell-out fallback (observed on macOS/zsh).
+
+**Fix location:** `brs-engine/packages/node/webpack.config.js` (or equivalent build script) needs
+a copy step for `node_modules/readline-sync/lib/read.sh` (and the Windows equivalents) into
+`packages/node/bin/`, and `packages/node/package.json`'s `files` array needs updating if those
+aren't already under `bin/`.

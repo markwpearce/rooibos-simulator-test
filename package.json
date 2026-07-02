@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "build": "bsc",
-    "test:brs": "brs-cli --root build",
+    "package": "bsc --create-package",
+    "test:brs": "brs-cli --root build source/Main.brs",
     "test": "npm run build && npm run test:brs"
   },
   "keywords": [],

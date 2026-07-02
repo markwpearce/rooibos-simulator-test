@@ -7,14 +7,20 @@
   ],
   "autoImportComponentScript": true,
   "createPackage": false,
-  "stagingFolderPath": "build",
+  "outFile": "./out/rooibos-simulator-test.zip",
+  "retainStagingDir": true,
+  "stagingDir": "build",
   "plugins": [
     "rooibos-roku"
   ],
   "rooibos": {
     "isRecordingCodeCoverage": false,
     "testsFilePattern": null,
-    "tags": ["!integration", "!deprecated", "!fixme"],
+    "tags": [
+      "!integration",
+      "!deprecated",
+      "!fixme"
+    ],
     "showOnlyFailures": false,
     "catchCrashes": true,
     "colorizeOutput": true,
@@ -23,7 +29,9 @@
     "sendHomeOnFinish": false,
     "keepAppOpen": false,
     "isGlobalMethodMockingEnabled": true,
-    "reporters": ["console"]
+    "reporters": [
+      "console"
+    ]
   },
   "sourceMap": true
 }
