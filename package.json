@@ -1,0 +1,19 @@
+{
+  "name": "rooibos-simulator-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "bsc",
+    "test:brs": "brs-cli --root build",
+    "test": "npm run build && npm run test:brs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "brighterscript": "^0.72.5",
+    "brs-node": "^2.2.0",
+    "rooibos-roku": "^5.16.4"
+  }
+}

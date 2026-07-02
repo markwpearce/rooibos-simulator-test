@@ -1,0 +1,6 @@
+title=Rooibos brs-engine Compatibility Tests
+major_version=1
+minor_version=0
+build_version=0
+run_as_process=1
+supports_input_launch=1

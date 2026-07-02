@@ -1,0 +1,12 @@
+namespace tests
+  class BaseTestSuite extends rooibos.BaseTestSuite
+    protected override function setup()
+    end function
+
+    protected override function beforeEach()
+    end function
+
+    protected override function afterEach()
+    end function
+  end class
+end namespace

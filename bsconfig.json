@@ -1,0 +1,29 @@
+{
+  "rootDir": "src",
+  "files": [
+    "manifest",
+    "source/**/*.*",
+    "components/**/*.*"
+  ],
+  "autoImportComponentScript": true,
+  "createPackage": false,
+  "stagingFolderPath": "build",
+  "plugins": [
+    "rooibos-roku"
+  ],
+  "rooibos": {
+    "isRecordingCodeCoverage": false,
+    "testsFilePattern": null,
+    "tags": ["!integration", "!deprecated", "!fixme"],
+    "showOnlyFailures": false,
+    "catchCrashes": true,
+    "colorizeOutput": true,
+    "lineWidth": 70,
+    "failFast": false,
+    "sendHomeOnFinish": false,
+    "keepAppOpen": false,
+    "isGlobalMethodMockingEnabled": true,
+    "reporters": ["console"]
+  },
+  "sourceMap": true
+}

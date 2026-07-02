@@ -1,0 +1,46 @@
+namespace tests
+
+  ' Minimal smoke-test suite: plain assertions only, no SceneGraph beyond what
+  ' rooibos itself needs to boot. If this suite doesn't produce a
+  ' "[Rooibos Result]:" line under brs-cli, the failure is in rooibos's core
+  ' init path (IsDev() check, roSGScreen/scene creation) rather than in any
+  ' specific BrightScript feature.
+  @suite
+  class BasicTests extends tests.BaseTestSuite
+
+    @describe("primitive assertions")
+
+    @it("compares scalars")
+    function _()
+      m.assertEqual(1 + 1, 2)
+      m.assertTrue(true)
+      m.assertFalse(false)
+      m.assertNotEqual("a", "b")
+    end function
+
+    @it("compares arrays and associative arrays")
+    function _()
+      arr = [1, 2, 3]
+      m.assertArrayCount(arr, 3)
+      m.assertArrayContains(arr, 2)
+
+      aa = { name: "rooibos", version: 5 }
+      m.assertAAHasKey(aa, "name")
+      m.assertEqual(aa.name, "rooibos")
+    end function
+
+    @it("handles invalid values")
+    function _()
+      m.assertInvalid(invalid)
+      m.assertNotInvalid(1)
+    end function
+
+    @params(1, 1, 2)
+    @params(2, 3, 5)
+    @params(-1, 1, 0)
+    @it("adds two numbers")
+    function _(a, b, expected)
+      m.assertEqual(a + b, expected)
+    end function
+  end class
+end namespace
