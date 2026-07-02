@@ -10,18 +10,44 @@ Node CLI (`brs-node` / `brs-cli`), to find out exactly where the two are incompa
 npm install
 ```
 
+## bsconfig layout
+
+- `bsconfig.base.json` — shared settings (`rootDir`, `files`, `autoImportComponentScript`,
+  `sourceMap`, `stagingDir`). Not used directly.
+- `bsconfig.json` — extends the base config, adds the `rooibos-roku` plugin and rooibos runtime
+  settings. This is the **default** config (what `bsc`, VSCode, and the `rokucommunity.brightscript`
+  extension pick up automatically), staged to `build/`. Use this for anything test-related.
+- `bsconfig.build.json` — extends the base config, no rooibos plugin, and excludes
+  `source/tests/**` from `files`. Produces a clean, test-free build/package, staged to `dist/`.
+  Exists so we have a non-rooibos baseline to isolate whether a given failure is rooibos-specific
+  or a general brighterscript/brs-engine issue.
+
 ## Build + run
 
 ```bash
-npm run build      # bsc -> build/
-npm run test:brs   # brs-cli --root build source/Main.brs
-# or both:
-npm test
+npm run build         # bsc                                  -> build/  (rooibos tests included)
+npm run test:brs      # brs-cli --root build source/Main.brs
+npm test              # both of the above
+
+npm run build:release # bsc --project bsconfig.build.json     -> dist/  (no rooibos, no tests)
+npm run package        # same, plus --create-package          -> out/rooibos-simulator-test-release.zip
 ```
 
 Note the exact invocation: `brs-cli --root build` **alone** drops into an interactive REPL rather
 than auto-running the app (despite what brs-engine's docs imply) — you must pass the entry file
 explicitly, relative to `--root`: `brs-cli --root build source/Main.brs`.
+
+## VSCode
+
+- `.vscode/launch.json`:
+  - **Roku Device: Debug** — runs the test build on a real Roku via the `rokucommunity.brightscript`
+    extension (prompts for host/password interactively).
+  - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — runs the test build under
+    `brs-cli` in the integrated terminal (the debug variant passes `--debug` for brs-engine's own
+    Micro Debugger; real stdin/TTY is required, which is why these are `node`-type launches with
+    `console: "integratedTerminal"`, not the `brightscript` debugger type).
+- `.vscode/tasks.json`: `build` (default/test config) and `package` (release config + zip) tasks,
+  wired as `preLaunchTask`s.
 
 ## Known brs-engine gaps
 

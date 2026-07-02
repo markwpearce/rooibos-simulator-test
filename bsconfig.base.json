@@ -1,0 +1,12 @@
+{
+  "rootDir": "src",
+  "files": [
+    "manifest",
+    "source/**/*.*",
+    "components/**/*.*"
+  ],
+  "autoImportComponentScript": true,
+  "sourceMap": true,
+  "createPackage": false,
+  "stagingDir": "build"
+}

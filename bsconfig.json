@@ -1,15 +1,7 @@
 {
-  "rootDir": "src",
-  "files": [
-    "manifest",
-    "source/**/*.*",
-    "components/**/*.*"
-  ],
-  "autoImportComponentScript": true,
-  "createPackage": false,
+  "extends": "bsconfig.base.json",
   "outFile": "./out/rooibos-simulator-test.zip",
   "retainStagingDir": true,
-  "stagingDir": "build",
   "plugins": [
     "rooibos-roku"
   ],
@@ -32,6 +24,5 @@
     "reporters": [
       "console"
     ]
-  },
-  "sourceMap": true
+  }
 }
