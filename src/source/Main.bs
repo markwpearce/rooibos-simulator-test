@@ -1,2 +1,5 @@
 sub main()
+    print "rooibos-simulator-test: Main() started"
+    print "device model: "; CreateObject("roDeviceInfo").GetModel()
+    print "IsDev: "; CreateObject("roAppInfo").IsDev()
 end sub
