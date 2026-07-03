@@ -1,6 +1,5 @@
 {
   "extends": "bsconfig.base.json",
-  "outFile": "./out/rooibos-simulator-test.zip",
   "retainStagingDir": true,
   "plugins": [
     "rooibos-roku"
