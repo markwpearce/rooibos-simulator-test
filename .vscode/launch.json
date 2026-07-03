@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Roku Device: Debug",
+      "name": "Roku Device: Debug Rooibos Tests",
       "type": "brightscript",
       "request": "launch",
       "consoleOutput": "full",
@@ -11,11 +11,13 @@
       "retainStagingFolder": true,
       "stopOnEntry": false,
       "rootDir": "${workspaceFolder}/build",
-      "sourceDirs": ["${workspaceFolder}/src"],
+      "sourceDirs": [
+        "${workspaceFolder}/src"
+      ],
       "enableDebuggerAutoRecovery": true,
       "stopDebuggerOnAppExit": true,
       "injectRaleTrackerTask": false,
-      "enableDebugProtocol": false
+      "enableDebugProtocol": true
     },
     {
       "name": "brs-engine Simulator: Run",
@@ -25,7 +27,11 @@
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal",
       "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
-      "runtimeArgs": ["--root", "${workspaceFolder}/build", "source/Main.brs"],
+      "runtimeArgs": [
+        "--root",
+        "${workspaceFolder}/build",
+        "source/Main.brs"
+      ],
       "cwd": "${workspaceFolder}"
     },
     {
@@ -36,7 +42,12 @@
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal",
       "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
-      "runtimeArgs": ["--root", "${workspaceFolder}/build", "source/Main.brs", "--debug"],
+      "runtimeArgs": [
+        "--root",
+        "${workspaceFolder}/build",
+        "source/Main.brs",
+        "--debug"
+      ],
       "cwd": "${workspaceFolder}"
     }
   ]

@@ -40,7 +40,7 @@ explicitly, relative to `--root`: `brs-cli --root build source/Main.brs`.
 ## VSCode
 
 - `.vscode/launch.json`:
-  - **Roku Device: Debug** — runs the test build on a real Roku via the `rokucommunity.brightscript`
+  - **Roku Device: Debug Rooibos Tests** — runs the test build on a real Roku via the `rokucommunity.brightscript`
     extension (prompts for host/password interactively).
   - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — runs the test build under
     `brs-cli` in the integrated terminal (the debug variant passes `--debug` for brs-engine's own
