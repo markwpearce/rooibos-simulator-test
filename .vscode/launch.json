@@ -26,12 +26,8 @@
       "preLaunchTask": "build",
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal",
-      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
-      "runtimeArgs": [
-        "--root",
-        "${workspaceFolder}/build",
-        "source/Main.brs"
-      ],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["${workspaceFolder}/scripts/run-brs-tests.sh"],
       "cwd": "${workspaceFolder}"
     },
     {
@@ -41,13 +37,8 @@
       "preLaunchTask": "build",
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal",
-      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
-      "runtimeArgs": [
-        "--root",
-        "${workspaceFolder}/build",
-        "source/Main.brs",
-        "--debug"
-      ],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["${workspaceFolder}/scripts/run-brs-tests.sh", "--debug"],
       "cwd": "${workspaceFolder}"
     }
   ]

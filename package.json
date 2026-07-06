@@ -7,7 +7,7 @@
     "build": "bsc",
     "build:release": "bsc --project bsconfig.build.json",
     "package": "bsc --project bsconfig.build.json --create-package",
-    "test:brs": "brs-cli --root build source/Main.brs",
+    "test:brs": "bash scripts/run-brs-tests.sh",
     "test": "npm run build && npm run test:brs"
   },
   "keywords": [],

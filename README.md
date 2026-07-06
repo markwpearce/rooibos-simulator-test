@@ -26,37 +26,39 @@ npm install
 
 ```bash
 npm run build         # bsc                                  -> build/  (rooibos tests included)
-npm run test:brs      # brs-cli --root build source/Main.brs
+npm run test:brs      # scripts/run-brs-tests.sh (see below)
 npm test              # both of the above
 
 npm run build:release # bsc --project bsconfig.build.json     -> dist/  (no rooibos, no tests)
 npm run package        # same, plus --create-package          -> out/rooibos-simulator-test-release.zip
 ```
 
-Note the exact invocation: `brs-cli --root build` **alone** drops into an interactive REPL rather
-than auto-running the app (despite what brs-engine's docs imply) — you must pass the entry file
-explicitly, relative to `--root`: `brs-cli --root build source/Main.brs`.
+`npm run test:brs` runs `scripts/run-brs-tests.sh` rather than a plain `brs-cli` invocation — see
+finding #1 below for why (short version: `brs-cli --root build source/Main.brs` alone silently
+never loads the test suite files, so the script explicitly lists every `.brs` file under
+`source/` as a workaround). With that workaround, **all suites currently pass**
+(`[Rooibos Result]: PASS`).
 
 ## VSCode
 
 - `.vscode/launch.json`:
   - **Roku Device: Debug Rooibos Tests** — runs the test build on a real Roku via the `rokucommunity.brightscript`
     extension (prompts for host/password interactively).
-  - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — runs the test build under
-    `brs-cli` in the integrated terminal (the debug variant passes `--debug` for brs-engine's own
-    Micro Debugger; real stdin/TTY is required, which is why these are `node`-type launches with
-    `console: "integratedTerminal"`, not the `brightscript` debugger type).
+  - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — runs the test build via
+    `scripts/run-brs-tests.sh` (see finding #1) in the integrated terminal (the debug variant
+    forwards `--debug` for brs-engine's own Micro Debugger; real stdin/TTY is required, which is
+    why these are `node`-type launches with `console: "integratedTerminal"`, not the `brightscript`
+    debugger type).
 - `.vscode/tasks.json`: `build` (default/test config) and `package` (release config + zip) tasks,
   wired as `preLaunchTask`s.
 
 ## Known brs-engine gaps
 
-### 1. `m` not swapped to the receiver for a method call inside `TestRunner.run()`'s loop
+### 1. `brs-cli`'s explicit-file invocation mode never loads rooibos's own test suite files
 
-**Suite:** `Basic.spec.bs` (blocks every suite — this crash happens before any suite gets to run)
+**Status: worked around** (see `scripts/run-brs-tests.sh`) — no longer blocks testing.
 
-**Repro:** `npm run build && npx brs-cli --root build source/Main.brs`
-
+**Original symptom** (`npm run build && npx brs-cli --root build source/Main.brs`):
 ```
 pkg:/source/rooibos/RuntimeConfig.brs(37,4-10): Type Mismatch. Unable to cast "<uninitialized>" to "Object".
 Backtrace:
@@ -68,47 +70,44 @@ Backtrace:
    file/line: pkg:/source/Main.brs(2)
 ```
 
-`TestRunner.run()` does:
-```brightscript
-suiteNames = m.runtimeConfig.getAllTestSuitesNames()   ' works
-for each name in suiteNames
-    suiteClass = m.runtimeConfig.getTestSuiteClassWithName(name)  ' crashes here
-```
+This was initially misdiagnosed (in an earlier version of this doc) as an `m`-binding bug in
+`TestRunner.run()`. It isn't. **Root cause:** `brs-cli --root <dir> <entryFile>` — the invocation
+you're forced into because bare `--root` alone drops into a REPL on `brs-node@2.2.0` — only loads
+the file(s) you explicitly list, plus whatever the SceneGraph extension separately pulls in via
+component `<script>` tags. It does **not** replicate real Roku's "every `.brs` file under
+`source/` (recursively) is automatically global scope" semantics. Rooibos's own framework files
+(`RuntimeConfig.brs`, `TestRunner.brs`, etc.) happen to get loaded anyway because BrighterScript's
+`autoImportComponentScript`/`'import` resolution wires them into `RooibosScene.xml`'s script-tag
+graph. But rooibos's *generated test suite classes* (e.g. our own
+`source/tests/Basic.spec.bs` → global function `tests_BasicTests`) are plain global-scope files
+with **no owning component**, so they're invisible under this invocation mode. Referencing
+`tests_BasicTests` (the bare, uncalled function reference `RuntimeConfig.getTestSuiteClassMap()`
+stores in its map) silently resolves to `Uninitialized` rather than erroring — confirmed directly
+by instrumenting the generated code: `type(tests_BasicTests)` printed `<uninitialized>` from
+`Main.brs`, before `Rooibos_init` even ran. `m.testSuites["BasicTests"]` then legitimately returns
+that uninitialized value, and coercing it to the method's declared `as object` return type is
+what actually throws. (`getAllTestSuitesNames()`, which only calls `.keys()`, doesn't touch the
+value, so it "works" and misleadingly looked like the differentiator during initial triage.)
 
-Both are calls to methods on the same `m.runtimeConfig` (a `RuntimeConfig` instance) object. The
-first succeeds; the second crashes. Running with `brs-cli --debug` and inspecting state at the
-crash (`var`) shows `m` has **19 fields**, including `reporter`, `rooibosTimer`, `suiteNames`, `i`,
-`numSuites`, `testSuite` — those are `TestRunner.run()`'s own locals, not `RuntimeConfig`'s. This
-means the interpreter executed `getTestSuiteClassWithName` **without swapping `m` to the
-`RuntimeConfig` receiver** — it kept the caller's (`TestRunner`) `m`. `TestRunner` happens to
-*also* have a field literally named `testSuites` (`m.testSuites = []`, set in its own
-constructor), so `m.testSuites["BasicTests"]` resolves against the wrong object, returns
-`invalid`, and coercing `invalid` to the method's declared `as object` return type throws the
-observed error.
+**This is already fixed upstream, just not released yet.** Commit `7839671e` ("feat(cli): run a
+folder app from `--root` alone (#771) (#960)", 2026-06-28, in `lvcabral/brs-engine`) adds
+`findSourceFiles()`/`discoverFromRoot` to `src/core/index.ts`'s `createPayloadFromFiles()`, which
+recursively scans `<root>/source` and runs `brs-cli --root <dir>` **with zero file args** as a
+real full-app run instead of dropping to the REPL. Verified locally: building brs-node from
+`/Users/mpearce/redspace/roku/brs-engine` HEAD and running `node .../brs.cli.js --root build`
+(no entry file) makes the `tests_BasicTests`/`RuntimeConfig` crash disappear entirely — it
+progresses to a *different*, unrelated, pre-existing WIP bug in that same checkout (`ENOENT`
+loading `/common:/fonts/system-fonts.json` in the SceneGraph extension's `Font`/`initSystemFonts`,
+reproducible independent of this fix). That confirms the fix works; it just isn't in a published
+`brs-node` version yet, and the currently-broken dev build can't be used as a substitute today.
 
-Minimal isolated repros of "call a method with no args, then a method with a typed arg, on the
-same AA-based object, in a `for each` loop" (see session notes) do **not** reproduce this — so
-the bug is sensitive to something in the surrounding `TestRunner.run()` control flow (most likely
-the preceding `reporter.onBegin({runner: m})` call, or something about the SceneGraph
-event-driven entry into `run()`), not to method-call `m`-binding in general.
-
-**Where to look in brs-engine source** (`/Users/mpearce/redspace/roku/brs-engine`):
-- `src/core/interpreter/index.ts`: `visitCall()` (~line 1242) computes `mPointer` from
-  `callee.getContext()` right after evaluating the callee expression and its arguments; `call()`
-  (~line 1894) does `subInterpreter.environment.setM(mPointer, false)` before invoking the callee.
-- `src/core/brsTypes/Callable.ts`: `context` (~line 151) is a single **mutable field directly on
-  the shared `Callable` object** (one object per named function declaration — every "instance" of
-  a class sharing a method points at the exact same `Callable`), set via `setContext()` in
-  `visitDottedGet()` in `index.ts` (~line 1327) immediately before the call reads it back. Anything
-  that touches that same `Callable` object's `context` between the `DottedGet` eval and the `Call`
-  eval (reentrancy, an interleaved SceneGraph field/tick callback, argument evaluation that
-  triggers another access through the same function reference) would cause exactly this class of
-  bug. Worth checking whether `execute()`'s per-statement `for (const ext of this.extensions.values()) { ext.tick?.(this) }`
-  hook (called on *every* statement) can run BrightScript code that touches the same shared
-  `Callable`/context in between.
-
-**Status:** not yet root-caused to a specific line; next step is bisecting `TestRunner.run()`
-(starting by removing the `reporter.onBegin(...)` loop) to find the minimal trigger.
+**Current workaround** (`scripts/run-brs-tests.sh`, wired to `npm run test:brs`): explicitly
+enumerate every `.brs` file under `build/source/` and pass them all as positional args to
+`brs-cli --root build` — this makes the CLI include all of them in the global scope regardless of
+component ownership, working around the gap on the currently-released `brs-node@2.2.0`. With this
+workaround, all 6 assertions in `Basic.spec.bs` pass (`[Rooibos Result]: PASS`). Once `brs-node`
+publishes a release containing the `--root`-alone fix, this workaround (and the script) can be
+deleted in favor of plain `brs-cli --root build`.
 
 ### 2. `brs-node`'s published npm package is missing `read.sh` (breaks `--debug` micro debugger input)
 
@@ -133,3 +132,22 @@ prompts) wherever `readline-sync` needs its shell-out fallback (observed on macO
 a copy step for `node_modules/readline-sync/lib/read.sh` (and the Windows equivalents) into
 `packages/node/bin/`, and `packages/node/package.json`'s `files` array needs updating if those
 aren't already under `bin/`.
+
+### 3. (unreleased HEAD only) SceneGraph `Font`/`initSystemFonts` can't find `common:/fonts/system-fonts.json`
+
+Not something we hit on the released `brs-node@2.2.0` — only surfaced while verifying finding #1's
+upstream fix by building `/Users/mpearce/redspace/roku/brs-engine` HEAD locally (both `npm run
+build -w brs-node` dev and `npm run release -w brs-node` production configs). Any SceneGraph node
+that triggers default-font registration (e.g. `RooibosScene`'s `Label`) crashes:
+```
+Exception [Error]: ENOENT: No such file or directory, open '/common:/fonts/system-fonts.json'
+    at initSystemFonts (brs-sg.node.js:10974:28)
+    at new Font (brs-sg.node.js:10914:9)
+    ...
+    at new Label (brs-sg.node.js:12821:14)
+```
+Reproduces identically regardless of `--root`-alone vs explicit-file invocation, and regardless of
+`cwd` when invoking `node .../brs.cli.js` directly — so unrelated to finding #1's fix, and looks
+like an in-progress/incomplete piece of whatever's currently at HEAD (`common:/` volume not
+populated with the fonts asset in this checkout state). Worth a fresh look before relying on a
+build past `e7cfd962` for testing.
