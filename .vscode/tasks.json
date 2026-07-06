@@ -20,6 +20,21 @@
       }
     },
     {
+      "label": "build-test-zip",
+      "type": "shell",
+      "command": "npm run build:test-zip",
+      "problemMatcher": ["$bsc"],
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": true
+      },
+      "group": "build"
+    },
+    {
       "label": "package",
       "type": "shell",
       "command": "npm run package",

@@ -23,22 +23,22 @@
       "name": "brs-engine Simulator: Run",
       "type": "node",
       "request": "launch",
-      "preLaunchTask": "build",
+      "preLaunchTask": "build-test-zip",
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal",
-      "runtimeExecutable": "bash",
-      "runtimeArgs": ["${workspaceFolder}/scripts/run-brs-tests.sh"],
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
+      "runtimeArgs": ["${workspaceFolder}/out/rooibos-tests.zip"],
       "cwd": "${workspaceFolder}"
     },
     {
       "name": "brs-engine Simulator: Debug (Micro Debugger)",
       "type": "node",
       "request": "launch",
-      "preLaunchTask": "build",
+      "preLaunchTask": "build-test-zip",
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal",
-      "runtimeExecutable": "bash",
-      "runtimeArgs": ["${workspaceFolder}/scripts/run-brs-tests.sh", "--debug"],
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/brs-cli",
+      "runtimeArgs": ["${workspaceFolder}/out/rooibos-tests.zip", "--debug"],
       "cwd": "${workspaceFolder}"
     }
   ]

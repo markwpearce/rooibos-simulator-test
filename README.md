@@ -25,38 +25,40 @@ npm install
 ## Build + run
 
 ```bash
-npm run build         # bsc                                  -> build/  (rooibos tests included)
-npm run test:brs      # scripts/run-brs-tests.sh (see below)
-npm test              # both of the above
+npm run build          # bsc                                  -> build/  (rooibos tests included, unzipped)
+npm run build:test-zip  # bsc --create-package --out-file ...  -> out/rooibos-tests.zip
+npm run test:brs        # brs-cli out/rooibos-tests.zip
+npm test                # build:test-zip + test:brs
 
-npm run build:release # bsc --project bsconfig.build.json     -> dist/  (no rooibos, no tests)
-npm run package        # same, plus --create-package          -> out/rooibos-simulator-test-release.zip
+npm run build:release  # bsc --project bsconfig.build.json     -> dist/  (no rooibos, no tests)
+npm run package         # same, plus --create-package          -> out/rooibos-simulator-test-release.zip
 ```
 
-`npm run test:brs` runs `scripts/run-brs-tests.sh` rather than a plain `brs-cli` invocation — see
-finding #1 below for why (short version: `brs-cli --root build source/Main.brs` alone silently
-never loads the test suite files, so the script explicitly lists every `.brs` file under
-`source/` as a workaround). With that workaround, **all suites currently pass**
-(`[Rooibos Result]: PASS`).
+We run tests via a **zip package**, not the unzipped `build/` folder — see finding #1 below for
+why (short version: `brs-cli`'s explicit-entry-file invocation, which is what running a plain
+folder forces you into, doesn't load every file under `source/`; a zip is a self-contained
+package brs-engine loads in full, so this sidesteps the problem entirely rather than working
+around it). `npm run build` (unzipped, staged to `build/`) still exists for the on-device debug
+config below, which needs a real staging folder to deploy from, not a zip.
 
 ## VSCode
 
 - `.vscode/launch.json`:
   - **Roku Device: Debug Rooibos Tests** — runs the test build on a real Roku via the `rokucommunity.brightscript`
     extension (prompts for host/password interactively).
-  - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — runs the test build via
-    `scripts/run-brs-tests.sh` (see finding #1) in the integrated terminal (the debug variant
-    forwards `--debug` for brs-engine's own Micro Debugger; real stdin/TTY is required, which is
-    why these are `node`-type launches with `console: "integratedTerminal"`, not the `brightscript`
-    debugger type).
-- `.vscode/tasks.json`: `build` (default/test config) and `package` (release config + zip) tasks,
-  wired as `preLaunchTask`s.
+  - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — builds `out/rooibos-tests.zip`
+    and runs it via `brs-cli` in the integrated terminal (the debug variant passes `--debug` for
+    brs-engine's own Micro Debugger; real stdin/TTY is required, which is why these are
+    `node`-type launches with `console: "integratedTerminal"`, not the `brightscript` debugger
+    type).
+- `.vscode/tasks.json`: `build` (unzipped test config), `build-test-zip` (zipped test config), and
+  `package` (release config + zip) tasks, wired as `preLaunchTask`s.
 
 ## Known brs-engine gaps
 
 ### 1. `brs-cli`'s explicit-file invocation mode never loads rooibos's own test suite files
 
-**Status: worked around** (see `scripts/run-brs-tests.sh`) — no longer blocks testing.
+**Status: resolved** (run from a `.zip` package instead of a bare folder) — no longer blocks testing.
 
 **Original symptom** (`npm run build && npx brs-cli --root build source/Main.brs`):
 ```
@@ -101,13 +103,19 @@ loading `/common:/fonts/system-fonts.json` in the SceneGraph extension's `Font`/
 reproducible independent of this fix). That confirms the fix works; it just isn't in a published
 `brs-node` version yet, and the currently-broken dev build can't be used as a substitute today.
 
-**Current workaround** (`scripts/run-brs-tests.sh`, wired to `npm run test:brs`): explicitly
-enumerate every `.brs` file under `build/source/` and pass them all as positional args to
-`brs-cli --root build` — this makes the CLI include all of them in the global scope regardless of
-component ownership, working around the gap on the currently-released `brs-node@2.2.0`. With this
-workaround, all 6 assertions in `Basic.spec.bs` pass (`[Rooibos Result]: PASS`). Once `brs-node`
-publishes a release containing the `--root`-alone fix, this workaround (and the script) can be
-deleted in favor of plain `brs-cli --root build`.
+**Current solution** (`npm run test:brs`, i.e. `brs-cli out/rooibos-tests.zip`): rather than
+working around the folder-invocation gap by enumerating files, sidestep it entirely by running a
+`.zip` package instead. `brs-cli <file>.zip` (`src/cli/index.ts`'s "Run App Package file" branch,
+`loadAppZip`) treats the zip as a complete, self-contained app and loads everything inside it —
+there's no `--root`/explicit-entry-file distinction for zips, so rooibos's test suite classes are
+included the same way `RuntimeConfig.brs` always was. We already had `bsc --create-package` wired
+up for the release build (finding was: don't reuse the *release* config's zip, since it excludes
+rooibos and tests — see the `bsconfig` layout section above); `npm run build:test-zip` produces
+the equivalent zip from the **testing** config instead, via `bsc --create-package --out-file
+./out/rooibos-tests.zip`. With this, all 6 assertions in `Basic.spec.bs` pass
+(`[Rooibos Result]: PASS`), and there's no workaround script to eventually retire — this is just
+the normal way to run a packaged BrightScript app, unrelated to whether/when `brs-node` publishes
+the `--root`-alone fix.
 
 ### 2. `brs-node`'s published npm package is missing `read.sh` (breaks `--debug` micro debugger input)
 

@@ -5,10 +5,11 @@
   "main": "index.js",
   "scripts": {
     "build": "bsc",
+    "build:test-zip": "bsc --create-package --out-file ./out/rooibos-tests.zip",
     "build:release": "bsc --project bsconfig.build.json",
     "package": "bsc --project bsconfig.build.json --create-package",
-    "test:brs": "bash scripts/run-brs-tests.sh",
-    "test": "npm run build && npm run test:brs"
+    "test:brs": "brs-cli out/rooibos-tests.zip",
+    "test": "npm run build:test-zip && npm run test:brs"
   },
   "keywords": [],
   "author": "",
