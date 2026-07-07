@@ -159,3 +159,59 @@ Reproduces identically regardless of `--root`-alone vs explicit-file invocation,
 like an in-progress/incomplete piece of whatever's currently at HEAD (`common:/` volume not
 populated with the fonts asset in this checkout state). Worth a fresh look before relying on a
 build past `e7cfd962` for testing.
+
+### 4. `@SGNode(...)`-annotated Rooibos suites hang forever the moment their backing Task starts
+
+**Status: reproduced under both `brs-cli` and `brs-desktop`; root cause narrowed to brs-engine's
+Task↔render-thread rendezvous protocol, not yet fixed.**
+
+This is a minimized repro of a livelock originally found in a much larger production app (Bell
+Media's Crave Roku channel), where every `@async` test suite backed by a `@SGNode(...)`-annotated
+node (Rooibos's mechanism for running a test suite *as* an instance of a given SceneGraph node
+type, so the suite's own code executes inside that node's context/thread) hung indefinitely as
+soon as the node's underlying Task actually started. Reproduced here with a two-file, dependency-free
+minimal case:
+
+- `src/components/tasks/AsyncTask/AsyncTask.xml` + `.bs` — trivial `Task`-extending component,
+  `functionName="doWork"`, `doWork()` just sets `m.top.result = "done"` (no async work, no network
+  I/O, no third-party libraries).
+- `src/source/tests/SGNodeTask.spec.bs` — `@SGNode("AsyncTask")`-annotated suite with a single
+  trivially-`true` assertion:
+  ```brightscript
+  @SGNode("AsyncTask")
+  @suite("SGNodeTaskTests")
+  class SGNodeTaskTests extends tests.BaseTestSuite
+    @it("passes trivially while running as a Task node")
+    function _()
+      m.assertTrue(true)
+    end function
+  end class
+  ```
+
+**Symptom:** the suite's `It:` line prints, the `AsyncTask` Task worker spawns
+(`[task:api] Calling Task worker: 1, AsyncTask`), and then nothing else ever happens — no
+`END It`, no pass/fail, no `[Rooibos Result]`. Confirmed hung (not just slow) under `brs-cli` (still
+running/unresponsive after manual kill) and under `brs-desktop` (same hang; brs-desktop's own
+watchdog eventually kills and relaunches the whole app after ~78s, which just repeats the hang from
+scratch rather than recovering). A completely non-`@SGNode`, plain-suite version using the
+idiomatic `observeFieldScoped` + `m.done()` async pattern (`AsyncTask.spec.bs`) does **not**
+reproduce this — it's specifically the suite-runs-as-a-Task-node execution model that triggers it.
+
+**Root cause (partially traced, not fixed):** every `@SGNode`/`@async` suite reports completion via
+`rooibos-roku`'s `BaseTestSuite.bs::testSuiteDone()`, which does
+`m.testRunner.top.rooibosTestResult = {...}` — a field write on a node reference (`m.testRunner`,
+captured on the main test-runner thread) from *inside* the SGNode-task's own thread. Instrumenting
+brs-engine's `Task.ts`/`SGRoot.ts` (`processThreadUpdate`, `resolveNode`, `handleThreadUpdate` in
+`api/task.ts`) directly confirms: the worker thread's `processThreadUpdate()` polling loop spins
+indefinitely at `currentVersion=0` (i.e. never sees a real pending update land), and separately,
+the address a cross-thread `type:"node"` write targets was observed differing from the address of
+the same logical node as mirrored via other thread-sync paths (`m.global.*` field mirroring vs.
+whatever path produced `m.testRunner`). Whether this is (a) an address-identity mismatch across two
+independent serialization events for "the same" node, or (b) a lost-update race in the single-slot
+version-flag buffer used for the task→render rendezvous channel, wasn't conclusively separated —
+both were observed and may compound. Diagnostic instrumentation was added directly to a local
+`brs-engine` checkout (`~/redspace/roku/brs-engine`, `Task.ts`/`SGRoot.ts`, search for
+`DIAG`/`sg-diag`) to gather this evidence; not yet reverted.
+
+**Confirmed NOT the cause:** Rooibos's `catchCrashes` config option — disabling it in the original
+production-app repro made no difference, and this minimal repro doesn't set it at all.

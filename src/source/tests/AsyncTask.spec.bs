@@ -1,0 +1,28 @@
+namespace tests
+
+  ' Minimal repro for the brs-engine cross-thread livelock found in the real app: a Task
+  ' completes and an observer callback bound to the test suite instance runs — on real Roku
+  ' this callback always executes on the *observing* (main) thread, never the Task's own
+  ' thread. If brs-engine instead invokes it on the Task's own thread, `m.done()`'s internal
+  ' write-back to the TestRunner scene node becomes a cross-thread node write that brs-engine
+  ' can't resolve, and the suite hangs forever instead of completing.
+  @suite
+  class AsyncTaskTests extends tests.BaseTestSuite
+
+    @describe("async task completion")
+
+    @async(5000)
+    @it("completes via observeFieldScoped from a Task")
+    sub _()
+      task = createObject("roSGNode", "AsyncTask")
+      task.observeFieldScoped("result", "onResult")
+      m.task = task
+      task.control = "run"
+    end sub
+
+    sub onResult()
+      m.assertEqual(m.task.result, "done")
+      m.done()
+    end sub
+  end class
+end namespace

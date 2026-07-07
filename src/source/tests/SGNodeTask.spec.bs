@@ -1,0 +1,21 @@
+import "pkg:/source/tests/BaseTestSuite.spec.bs"
+
+namespace tests
+
+  ' Minimal repro attempt #2: the real app's failing suite is @SGNode-annotated, meaning the
+  ' suite class itself runs as an instance of the given node type (here, a Task), i.e. on its
+  ' own dedicated worker thread. Testing whether that alone (completely synchronous, no nested
+  ' async work) is enough to trigger the cross-thread `rooibosTestResult` write-back livelock
+  ' when the suite finishes.
+  @SGNode("AsyncTask")
+  @suite("SGNodeTaskTests")
+  class SGNodeTaskTests extends tests.BaseTestSuite
+
+    @describe("sgnode task suite")
+
+    @it("passes trivially while running as a Task node")
+    function _()
+      m.assertTrue(true)
+    end function
+  end class
+end namespace

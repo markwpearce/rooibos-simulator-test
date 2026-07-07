@@ -1,0 +1,8 @@
+sub init()
+    m.top.functionName = "doWork"
+end sub
+
+sub doWork()
+    sleep(500)
+    m.top.result = "done"
+end sub
