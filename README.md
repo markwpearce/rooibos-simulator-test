@@ -107,13 +107,13 @@ result (step 6) — and that call never returns to let the loop iterate again. *
 tick to resolve, and the only place that tick can run is the exact call stack the promise is
 blocking.** A trivial synchronous assertion is enough to reproduce it; no real async work needed.
 
-This is the same mechanism behind the original production hang (Bell Media's Crave app,
-`CraveApiTests` suite, `@SGNode("CraveApi")`): a real network Task genuinely completes its HTTP
-call on its own thread via `promises.chain(promise).then(sub(app) ... m.testSuite.done() ...)`, but
-nothing can ever service the Timer that would deliver that result into the suite's blocked call
-stack. (`SGRoot.processTasks()`, which drives real Task activation/messaging, is *also* only
-reachable from that same `RoSGScreen.getNewEvents()` call — so genuinely async Task work is starved
-by the identical mechanism, Promise indirection or not.)
+This is the same mechanism behind the original production hang this repo was minimized from: an
+`@SGNode(...)`-backed suite testing a GraphQL API layer, using a real network Task and
+`promises.chain(promise).then(sub(app) ... m.testSuite.done() ...)`. The Task genuinely completes
+its HTTP call on its own thread, but nothing can ever service the Timer that would deliver that
+result into the suite's blocked call stack. (`SGRoot.processTasks()`, which drives real Task
+activation/messaging, is *also* only reachable from that same `RoSGScreen.getNewEvents()` call —
+so genuinely async Task work is starved by the identical mechanism, Promise indirection or not.)
 
 Ruled out along the way, in case they look promising to whoever picks this up next: Rooibos's
 `catchCrashes` option (no effect either way); `RoSGNode.getScene()`'s cross-thread rendezvous
