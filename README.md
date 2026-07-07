@@ -160,21 +160,37 @@ like an in-progress/incomplete piece of whatever's currently at HEAD (`common:/`
 populated with the fonts asset in this checkout state). Worth a fresh look before relying on a
 build past `e7cfd962` for testing.
 
-### 4. `@SGNode(...)`-annotated Rooibos suites hang forever the moment their backing Task starts
+### 4. `@SGNode(...)`-annotated Rooibos suites hang forever because Promise `.then()` dispatch needs a tick that never comes
 
-**Status: reproduced under both `brs-cli` and `brs-desktop`; root cause narrowed to brs-engine's
-Task↔render-thread rendezvous protocol, not yet fixed.**
+**Status: reproduced under both `brs-cli` and `brs-desktop`; root cause confirmed by direct source
+reading (both brs-engine and rooibos-roku), not yet fixed.**
+
+**tl;dr:** every `.then()`/`.catch()`/`.finally()` in the BrightScript Promises library
+(`roku_modules/rooibos_promises/promises.brs`) schedules its callback via a `Timer` node
+(`rooibos_promises_internal_delay()` → `createObject("roSGNode", "Timer")`). Timer processing
+(`SGRoot.processTimers()`) only runs from `RoSGScreen.getNewEvents()`, which itself only runs when
+BrightScript code calls `wait()` on a message port. Rooibos's `@SGNode`-annotated ("node test")
+suites run their *entire* body — setup, the test method, and any `promises.chain(...).then(...)` —
+synchronously inside a single observer callback, itself invoked from one iteration of
+`TestRunner.bs::runNodeTest()`'s own `wait(0, port)` loop, and **that call never returns** to let
+the *next* iteration of that loop process the pending timer. The promise needs a tick to resolve;
+the only place that tick can run is the exact call stack blocked waiting on the promise. Circular,
+unbreakable deadlock — independent of whether real cross-thread Task work is involved at all.
 
 This is a minimized repro of a livelock originally found in a much larger production app (Bell
 Media's Crave Roku channel), where every `@async` test suite backed by a `@SGNode(...)`-annotated
-node (Rooibos's mechanism for running a test suite *as* an instance of a given SceneGraph node
-type, so the suite's own code executes inside that node's context/thread) hung indefinitely as
-soon as the node's underlying Task actually started. Reproduced here with a two-file, dependency-free
-minimal case:
+node hung indefinitely. The production suite (`CraveApiTests`, `@SGNode("CraveApi")`) hits this via
+a real network Task and `promises.chain(promise).then(sub(app) ... m.testSuite.done() ...)` — the
+Task genuinely completes its HTTP call on its own thread, but nothing can ever service the Timer
+that would deliver that result back into the suite's blocked call stack. Reproduced here with a
+two-file, dependency-free minimal case that needs no real Task work at all, since the deadlock is
+in the Promise/Timer plumbing every node-test test goes through regardless
+(`rooibos.Test.bs::run()` auto-resolves a deferred promise even for plain synchronous, non-`@async`
+tests — see below):
 
 - `src/components/tasks/AsyncTask/AsyncTask.xml` + `.bs` — trivial `Task`-extending component,
-  `functionName="doWork"`, `doWork()` just sets `m.top.result = "done"` (no async work, no network
-  I/O, no third-party libraries).
+  `functionName="doWork"`, `doWork()` just sets `m.top.result = "done"` (unused by this specific
+  repro path, but keeps the component a genuine Task type as `@SGNode(...)` requires).
 - `src/source/tests/SGNodeTask.spec.bs` — `@SGNode("AsyncTask")`-annotated suite with a single
   trivially-`true` assertion:
   ```brightscript
@@ -188,72 +204,62 @@ minimal case:
   end class
   ```
 
-**Symptom:** the suite's `It:` line prints, the `AsyncTask` Task worker spawns
-(`[task:api] Calling Task worker: 1, AsyncTask`), and then nothing else ever happens — no
-`END It`, no pass/fail, no `[Rooibos Result]`. Confirmed hung (not just slow) under `brs-cli` (still
-running/unresponsive after manual kill) and under `brs-desktop` (same hang; brs-desktop's own
-watchdog eventually kills and relaunches the whole app after ~78s, which just repeats the hang from
-scratch rather than recovering). A completely non-`@SGNode`, plain-suite version using the
-idiomatic `observeFieldScoped` + `m.done()` async pattern (`AsyncTask.spec.bs`) does **not**
-reproduce this — it's specifically the suite-runs-as-a-Task-node execution model that triggers it.
+**Symptom:** the suite's `It:` *header* line prints (`>>>>>> It: ...`), but the matching `<<<< END
+It:` never does — no pass/fail, no `[Rooibos Result]`, no crash, just silence. Confirmed hung (not
+just slow) under both `brs-cli` and `brs-desktop` (brs-desktop's own watchdog eventually kills and
+relaunches the whole app after ~78s, which just repeats the hang from scratch). A completely
+non-`@SGNode`, plain-suite version using the idiomatic `observeFieldScoped` + `m.done()` async
+pattern (`AsyncTask.spec.bs`) does **not** reproduce this — it's specifically the
+suite-runs-as-a-node-test execution model that triggers it.
 
-**Root cause (partially traced, not fixed):** every `@SGNode`/`@async` suite reports completion via
-`rooibos-roku`'s `BaseTestSuite.bs::testSuiteDone()`, which does
-`m.testRunner.top.rooibosTestResult = {...}` — a field write on a node reference (`m.testRunner`,
-captured on the main test-runner thread) from *inside* the SGNode-task's own thread. Instrumenting
-brs-engine's `Task.ts`/`SGRoot.ts` (`processThreadUpdate`, `resolveNode`, `handleThreadUpdate` in
-`api/task.ts`) directly confirms: the worker thread's `processThreadUpdate()` polling loop spins
-indefinitely at `currentVersion=0` (i.e. never sees a real pending update land), and separately,
-the address a cross-thread `type:"node"` write targets was observed differing from the address of
-the same logical node as mirrored via other thread-sync paths (`m.global.*` field mirroring vs.
-whatever path produced `m.testRunner`). Whether this is (a) an address-identity mismatch across two
-independent serialization events for "the same" node, or (b) a lost-update race in the single-slot
-version-flag buffer used for the task→render rendezvous channel, wasn't conclusively separated —
-both were observed and may compound. Diagnostic instrumentation was added directly to a local
-`brs-engine` checkout (`~/redspace/roku/brs-engine`, `Task.ts`/`SGRoot.ts`, search for
-`DIAG`/`sg-diag`) to gather this evidence; not yet reverted.
+**Confirmed root cause, traced end to end through both codebases:**
+
+1. `TestGroup.bs::runNextAsync()` — for *any* node-test suite (`m.testSuite.isNodeTest = true`),
+   every individual test, `@async` or not, goes through
+   `rooibos.promises.chain(test.deferred, ...).then(...).catch(...).finally(...)` (line ~162).
+2. `rooibos.Test.bs::run()` (lines 76–80) — for a plain synchronous test, this correctly
+   auto-resolves: `rooibos.promises.resolve(invalid, m.deferred)`. So far so good — the promise
+   *is* resolved.
+3. But resolving a promise doesn't invoke its `.then()` synchronously. Every `.then()`/`.catch()`/
+   `.finally()` in `roku_modules/rooibos_promises/promises.brs` is dispatched via
+   `rooibos_promises_internal_delay()` (line 661), which does
+   `timer = createObject("roSGNode", "Timer")` and schedules the callback for ~0.1ms later —
+   i.e. "next tick," by design.
+4. That "next tick" is `SGRoot.processTimers()`, called only from
+   `RoSGScreen.getNewEvents()` (`brs-engine/src/extensions/scenegraph/components/RoSGScreen.ts`),
+   which itself is only invoked when BrightScript code calls `wait()`/`GetMessage()` on the
+   screen's message port.
+5. `TestRunner.bs::runNodeTest()` creates the node, sets `node.rooibosRunSuite = true` (an
+   `observeFieldScoped` field, dispatched asynchronously — *itself* delivered on the *next*
+   `wait(0, port)` iteration of `runNodeTest()`'s own loop), then enters
+   `while true: event = wait(0, port): ... end while` waiting for the node's `rooibosTestResult`
+   field to change.
+6. The generated `rooibosRunSuite()` handler that fires from that field-observer callback runs the
+   *entire* suite — `Rooibos_TestRunner(...)`, `testSuite.run()`, all the way down into step 1's
+   `promises.chain(...).then(...)` registration — **synchronously, in one call**, without ever
+   calling `wait()` itself.
+
+Put together: the Timer scheduled in step 3 can only fire via a `wait()`-driven tick (step 4), but
+the only `wait()` loop in the picture (`runNodeTest()`'s, step 5) is one level up the call stack
+from the code that's blocking on that Timer's result (step 6) — and that call never returns to let
+the loop iterate again. The promise needs a tick to resolve; the only place that tick can run is
+the exact call stack the promise is blocking. This reproduces with a trivially-synchronous
+assertion because it doesn't require real async Task work to trigger — merely going through
+Rooibos's node-test/Promise machinery at all is sufficient. Confirmed independently on the
+brs-engine side too: `SGRoot.processTasks()` (Task activation/message processing) is *also* only
+reachable from this same `RoSGScreen.getNewEvents()` call, so any genuinely async Task work
+(like the production repro's real network call) would be starved by the identical mechanism even
+if the Promise/Timer indirection weren't involved.
 
 **Confirmed NOT the cause:** Rooibos's `catchCrashes` config option — disabling it in the original
-production-app repro made no difference, and this minimal repro doesn't set it at all.
+production-app repro made no difference, and this minimal repro doesn't set it at all. Also ruled
+out along the way: `RoSGNode.getScene()`'s cross-thread rendezvous (returns correctly, and this
+particular suite never leaves the render thread in the first place — confirmed via
+`shouldRendezvous()`/`sgRoot.threadId` instrumentation), and a suspected `Task.ts` address-identity
+mismatch for `type:"node"` cross-thread writes (real, and still worth a look for cases with
+genuinely separate Task threads exchanging node references, but not what causes *this* specific
+hang).
 
-**Update — a second, distinct mechanism found while narrowing this down with the minimal repro.**
-More targeted instrumentation (logging every `getScene()` call, and every `control="run"`/
-`checkTaskRun()` worker-spawn event, with thread id + node address) on this minimal repro revealed
-something that doesn't fit the "two Task threads racing" story above:
-
-- `m.top.getScene()`, called from inside the generated `rooibosRunSuite()` handler, executes with
-  `sgRoot.threadId=0` (i.e. on the *render* thread, not a separate Task worker) and returns
-  successfully (`shouldRendezvous()` is `false`, so it just returns the already-known local scene —
-  no cross-thread call even attempted). So for this `@SGNode` suite, at least the initial
-  suite-setup-and-run phase is **not actually running on a separate OS thread** at the point the
-  `It:` assertion executes and prints — contrary to what "runs as an instance of the Task node
-  type" would suggest.
-- The *actual* Task-worker spawn we see in the log (`[task:api] Calling Task worker: 1,
-  AsyncTask`) turns out to be a **delayed, unrelated event**: instrumenting `setControlField()`
-  (fires when `control` is set to `"run"`) shows exactly one `control="run"` event for the *entire*
-  run, timestamped during the earlier, separate `AsyncTaskTests` suite (the plain
-  `observeFieldScoped` one) — and the corresponding `checkTaskRun()` worker-spawn (`postMessage`)
-  for that *same node address* doesn't fire until partway through the third suite
-  (`SGNodeTaskTests`), two suites later. `SGNodeTaskTests`'s own node never triggers a
-  `control="run"` event at all in the captured log.
-- Root cause of *that* delay, confirmed by reading the source directly: `SGRoot.processTasks()`
-  (which calls `checkTaskRun()`/`processThreadUpdate()` for every active Task) is only invoked from
-  `RoSGScreen.getNewEvents()` — i.e. **only when the interpreter yields control via a `wait()` call
-  on the screen's message port.** Any code path that runs a long synchronous stretch of
-  BrightScript without hitting a `wait()` starves *all* Task processing for its entire duration,
-  regardless of which thread(s) are conceptually involved. A Task created and started inside one
-  test method has no guarantee its worker will even be spawned before that test method returns.
-
-This is a real, independently-confirmed architectural gap (cooperative scheduling tied to explicit
-`wait()` yield points, rather than Tasks progressing independently the way they do against real
-Roku's genuine OS threads) — but it does **not** yet fully explain why `SGNodeTaskTests` itself
-hangs, since its own node/thread never shows up going through the instrumented `control="run"` →
-`checkTaskRun()` path at all. Two candidate explanations remain open: either `@SGNode` node-test
-activation uses a different code path than the normal `control="run"` flow (not yet located), or
-the hang is a blocking `Atomics.wait()` (confirmed: `SharedObject.waitVersion()` →
-`Atomics.wait()`, a true OS-level block, not a cooperative yield) called from a thread that is
-*also* solely responsible for eventually delivering the value it's blocking on — which would be a
-genuine, unrecoverable self-deadlock distinct from the address-mismatch theory above, and would
-explain why this specific case never resolves no matter how long you wait, while a busier app
-(like the original production repro) might merely appear "very slow" for cases that don't hit the
-same self-wait.
+Diagnostic instrumentation was added directly to a local `brs-engine` checkout
+(`~/redspace/roku/brs-engine`, `Task.ts`/`SGRoot.ts`/`RoSGNode.ts`, search for `DIAG`) to gather
+this evidence; not yet reverted.
