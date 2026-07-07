@@ -1,8 +1,10 @@
 # rooibos + brs-engine compatibility tests
 
-A scratch BrighterScript project used to run [rooibos](https://github.com/rokucommunity/rooibos)
-unit test suites off-device, under [brs-engine](https://github.com/lvcabral/brs-engine)'s headless
-Node CLI (`brs-node` / `brs-cli`), to find out exactly where the two are incompatible.
+A scratch BrighterScript project for running [rooibos](https://github.com/rokucommunity/rooibos)
+test suites off-device, under [brs-engine](https://github.com/lvcabral/brs-engine)'s headless Node
+CLI (`brs-node`/`brs-cli`) and its Electron desktop app
+([brs-desktop](https://github.com/lvcabral/brs-desktop)), to pin down exactly where rooibos and
+brs-engine disagree.
 
 ## Setup
 
@@ -10,256 +12,161 @@ Node CLI (`brs-node` / `brs-cli`), to find out exactly where the two are incompa
 npm install
 ```
 
-## bsconfig layout
-
-- `bsconfig.base.json` — shared settings (`rootDir`, `files`, `autoImportComponentScript`,
-  `sourceMap`, `stagingDir`). Not used directly.
-- `bsconfig.json` — extends the base config, adds the `rooibos-roku` plugin and rooibos runtime
-  settings. This is the **default** config (what `bsc`, VSCode, and the `rokucommunity.brightscript`
-  extension pick up automatically), staged to `build/`. Use this for anything test-related.
-- `bsconfig.build.json` — extends the base config, no rooibos plugin, and excludes
-  `source/tests/**` from `files`. Produces a clean, test-free build/package, staged to `dist/`.
-  Exists so we have a non-rooibos baseline to isolate whether a given failure is rooibos-specific
-  or a general brighterscript/brs-engine issue.
-
-## Build + run
+## Running tests
 
 ```bash
-npm run build          # bsc                                  -> build/  (rooibos tests included, unzipped)
-npm run build:test-zip  # bsc --create-package --out-file ...  -> out/rooibos-tests.zip
-npm run test:brs        # brs-cli out/rooibos-tests.zip
-npm test                # build:test-zip + test:brs
-
-npm run build:release  # bsc --project bsconfig.build.json     -> dist/  (no rooibos, no tests)
-npm run package         # same, plus --create-package          -> out/rooibos-simulator-test-release.zip
+npm run build:test-zip   # bsc --create-package --out-file ...  -> out/rooibos-tests.zip
+npm run test:brs          # brs-cli out/rooibos-tests.zip
+npm test                  # build:test-zip + test:brs
 ```
 
-We run tests via a **zip package**, not the unzipped `build/` folder — see finding #1 below for
-why (short version: `brs-cli`'s explicit-entry-file invocation, which is what running a plain
-folder forces you into, doesn't load every file under `source/`; a zip is a self-contained
-package brs-engine loads in full, so this sidesteps the problem entirely rather than working
-around it). `npm run build` (unzipped, staged to `build/`) still exists for the on-device debug
-config below, which needs a real staging folder to deploy from, not a zip.
+Tests run from a **zip package**, not the unzipped `build/` folder — `brs-cli`'s folder-invocation
+mode doesn't load every file the way a zip does (see [Finding 3](#3-brs-clis-explicit-file-invocation-doesnt-load-rooibos-test-suites-resolved)).
 
-## VSCode
+To run against **brs-desktop** instead of `brs-cli`, launch it with ECP + telnet + the web
+installer enabled, then sideload the zip:
 
-- `.vscode/launch.json`:
-  - **Roku Device: Debug Rooibos Tests** — runs the test build on a real Roku via the `rokucommunity.brightscript`
-    extension (prompts for host/password interactively).
-  - **brs-engine Simulator: Run** / **...: Debug (Micro Debugger)** — builds `out/rooibos-tests.zip`
-    and runs it via `brs-cli` in the integrated terminal (the debug variant passes `--debug` for
-    brs-engine's own Micro Debugger; real stdin/TTY is required, which is why these are
-    `node`-type launches with `console: "integratedTerminal"`, not the `brightscript` debugger
-    type).
-- `.vscode/tasks.json`: `build` (unzipped test config), `build-test-zip` (zipped test config), and
-  `package` (release config + zip) tasks, wired as `preLaunchTask`s.
+```bash
+# in a brs-desktop checkout
+npm start -- --ecp --rc --web --pwd=rokudev
 
-## Known brs-engine gaps
-
-### 1. `brs-cli`'s explicit-file invocation mode never loads rooibos's own test suite files
-
-**Status: resolved** (run from a `.zip` package instead of a bare folder) — no longer blocks testing.
-
-**Original symptom** (`npm run build && npx brs-cli --root build source/Main.brs`):
-```
-pkg:/source/rooibos/RuntimeConfig.brs(37,4-10): Type Mismatch. Unable to cast "<uninitialized>" to "Object".
-Backtrace:
-#2  Function __rooibos_TestRunner_method_run() As Dynamic
-   file/line: pkg:/source/rooibos/RuntimeConfig.brs(37)
-#1  Function rooibos_init(testSceneName As String) As Void
-   file/line: pkg:/source/rooibos/Rooibos.brs(29)
-#0  Function main() As Void
-   file/line: pkg:/source/Main.brs(2)
+# back in this repo — sideload + launch
+node -e "
+const { RokuDeploy } = require('roku-deploy');
+new RokuDeploy().publish({ host: '127.0.0.1', password: 'rokudev', outDir: './out', outFile: 'rooibos-tests' })
+"
+# then POST http://127.0.0.1:8060/launch/dev and read results from telnet 127.0.0.1:8085
 ```
 
-This was initially misdiagnosed (in an earlier version of this doc) as an `m`-binding bug in
-`TestRunner.run()`. It isn't. **Root cause:** `brs-cli --root <dir> <entryFile>` — the invocation
-you're forced into because bare `--root` alone drops into a REPL on `brs-node@2.2.0` — only loads
-the file(s) you explicitly list, plus whatever the SceneGraph extension separately pulls in via
-component `<script>` tags. It does **not** replicate real Roku's "every `.brs` file under
-`source/` (recursively) is automatically global scope" semantics. Rooibos's own framework files
-(`RuntimeConfig.brs`, `TestRunner.brs`, etc.) happen to get loaded anyway because BrighterScript's
-`autoImportComponentScript`/`'import` resolution wires them into `RooibosScene.xml`'s script-tag
-graph. But rooibos's *generated test suite classes* (e.g. our own
-`source/tests/Basic.spec.bs` → global function `tests_BasicTests`) are plain global-scope files
-with **no owning component**, so they're invisible under this invocation mode. Referencing
-`tests_BasicTests` (the bare, uncalled function reference `RuntimeConfig.getTestSuiteClassMap()`
-stores in its map) silently resolves to `Uninitialized` rather than erroring — confirmed directly
-by instrumenting the generated code: `type(tests_BasicTests)` printed `<uninitialized>` from
-`Main.brs`, before `Rooibos_init` even ran. `m.testSuites["BasicTests"]` then legitimately returns
-that uninitialized value, and coercing it to the method's declared `as object` return type is
-what actually throws. (`getAllTestSuitesNames()`, which only calls `.keys()`, doesn't touch the
-value, so it "works" and misleadingly looked like the differentiator during initial triage.)
+To run on a **real Roku device**, use the `Roku Device: Debug Rooibos Tests` VS Code launch config
+(prompts for host/password).
 
-**This is already fixed upstream, just not released yet.** Commit `7839671e` ("feat(cli): run a
-folder app from `--root` alone (#771) (#960)", 2026-06-28, in `lvcabral/brs-engine`) adds
-`findSourceFiles()`/`discoverFromRoot` to `src/core/index.ts`'s `createPayloadFromFiles()`, which
-recursively scans `<root>/source` and runs `brs-cli --root <dir>` **with zero file args** as a
-real full-app run instead of dropping to the REPL. Verified locally: building brs-node from
-`/Users/mpearce/redspace/roku/brs-engine` HEAD and running `node .../brs.cli.js --root build`
-(no entry file) makes the `tests_BasicTests`/`RuntimeConfig` crash disappear entirely — it
-progresses to a *different*, unrelated, pre-existing WIP bug in that same checkout (`ENOENT`
-loading `/common:/fonts/system-fonts.json` in the SceneGraph extension's `Font`/`initSystemFonts`,
-reproducible independent of this fix). That confirms the fix works; it just isn't in a published
-`brs-node` version yet, and the currently-broken dev build can't be used as a substitute today.
+## Project layout
 
-**Current solution** (`npm run test:brs`, i.e. `brs-cli out/rooibos-tests.zip`): rather than
-working around the folder-invocation gap by enumerating files, sidestep it entirely by running a
-`.zip` package instead. `brs-cli <file>.zip` (`src/cli/index.ts`'s "Run App Package file" branch,
-`loadAppZip`) treats the zip as a complete, self-contained app and loads everything inside it —
-there's no `--root`/explicit-entry-file distinction for zips, so rooibos's test suite classes are
-included the same way `RuntimeConfig.brs` always was. We already had `bsc --create-package` wired
-up for the release build (finding was: don't reuse the *release* config's zip, since it excludes
-rooibos and tests — see the `bsconfig` layout section above); `npm run build:test-zip` produces
-the equivalent zip from the **testing** config instead, via `bsc --create-package --out-file
-./out/rooibos-tests.zip`. With this, all 6 assertions in `Basic.spec.bs` pass
-(`[Rooibos Result]: PASS`), and there's no workaround script to eventually retire — this is just
-the normal way to run a packaged BrightScript app, unrelated to whether/when `brs-node` publishes
-the `--root`-alone fix.
+- `bsconfig.base.json` — shared settings (`rootDir`, `files`, `autoImportComponentScript`,
+  `stagingDir`). Not used directly.
+- `bsconfig.json` — the **default** config: base + rooibos plugin/settings, staged to `build/`.
+  Use this for anything test-related.
+- `bsconfig.build.json` — base config, no rooibos, no `source/tests/**`, staged to `dist/`. A
+  clean, test-free baseline for isolating whether a failure is rooibos-specific.
+- `src/components/tasks/AsyncTask/` — minimal `Task`-extending component used by the repros below.
+- `src/source/tests/` — the test suites themselves (see Findings).
 
-### 2. `brs-node`'s published npm package is missing `read.sh` (breaks `--debug` micro debugger input)
+## Findings
 
-Running `brs-cli --debug` and interacting with the Micro Debugger (or the plain REPL) fails with:
+### The big one: `@SGNode(...)` suites deadlock — Promise `.then()` needs a tick that never comes
+
+**Status:** root cause confirmed by reading both codebases end to end; not fixed.
+
+Any Rooibos suite annotated `@SGNode(...)` (runs the suite *as* an instance of a given SceneGraph
+node) hangs forever, permanently — no crash, no timeout, no `[Rooibos Result]`. Reproduced with a
+two-file, dependency-free minimal case:
+
+```brightscript
+' src/source/tests/SGNodeTask.spec.bs
+@SGNode("AsyncTask")
+@suite("SGNodeTaskTests")
+class SGNodeTaskTests extends tests.BaseTestSuite
+  @it("passes trivially while running as a Task node")
+  function _()
+    m.assertTrue(true)
+  end function
+end class
+```
+
+(`AsyncTask` is just a trivial `Task`-extending component — `@SGNode(...)` requires its target to
+be a real Task type, but this repro never actually needs the Task to do anything.)
+
+**Symptom:** the `>>>>>> It: ...` header prints; the matching `<<<< END It: ...` never does.
+Confirmed under both `brs-cli` and `brs-desktop` (brs-desktop's own watchdog eventually kills and
+relaunches the app after ~78s, which just repeats the hang).
+
+**Root cause**, traced step by step through `rooibos-roku` and `brs-engine` source:
+
+1. For *any* node-test suite, every individual test — `@async` or not — is run through a Promise:
+   `TestGroup.bs::runNextAsync()` does
+   `rooibos.promises.chain(test.deferred, ...).then(...).catch(...).finally(...)`.
+2. For a plain synchronous (non-`@async`) test, `rooibos.Test.bs::run()` correctly auto-resolves
+   that promise immediately: `rooibos.promises.resolve(invalid, m.deferred)`.
+3. But resolving a promise doesn't invoke `.then()` synchronously. Every `.then()`/`.catch()`/
+   `.finally()` in the Promises library (`roku_modules/rooibos_promises/promises.brs`) is
+   dispatched via `rooibos_promises_internal_delay()`, which creates a `Timer` node to fire the
+   callback on the "next tick."
+4. That tick is `SGRoot.processTimers()`, reachable *only* from `RoSGScreen.getNewEvents()`
+   (`brs-engine/src/extensions/scenegraph/components/RoSGScreen.ts`) — which itself only runs when
+   BrightScript code calls `wait()`/`GetMessage()` on a message port.
+5. `TestRunner.bs::runNodeTest()` creates the node and enters
+   `while true: event = wait(0, port): ... end while`, waiting for the node's `rooibosTestResult`
+   field to change.
+6. The entire suite — including the step-1 Promise registration — runs **synchronously, inside one
+   call** triggered from that same loop, and never calls `wait()` itself before returning.
+
+The Timer from step 3 can only fire via the tick from step 4, but the only `wait()` loop able to
+produce that tick (step 5) is one level up the call stack from the code blocking on the Timer's
+result (step 6) — and that call never returns to let the loop iterate again. **The promise needs a
+tick to resolve, and the only place that tick can run is the exact call stack the promise is
+blocking.** A trivial synchronous assertion is enough to reproduce it; no real async work needed.
+
+This is the same mechanism behind the original production hang (Bell Media's Crave app,
+`CraveApiTests` suite, `@SGNode("CraveApi")`): a real network Task genuinely completes its HTTP
+call on its own thread via `promises.chain(promise).then(sub(app) ... m.testSuite.done() ...)`, but
+nothing can ever service the Timer that would deliver that result into the suite's blocked call
+stack. (`SGRoot.processTasks()`, which drives real Task activation/messaging, is *also* only
+reachable from that same `RoSGScreen.getNewEvents()` call — so genuinely async Task work is starved
+by the identical mechanism, Promise indirection or not.)
+
+Ruled out along the way, in case they look promising to whoever picks this up next: Rooibos's
+`catchCrashes` option (no effect either way); `RoSGNode.getScene()`'s cross-thread rendezvous
+(returns correctly — this suite never actually leaves the render thread); and a suspected
+`Task.ts` address-identity mismatch for cross-thread node writes (real, but not the cause of *this*
+hang — may still be worth a look for suites with genuinely separate Task threads exchanging node
+references).
+
+### Other findings
+
+#### 1. `brs-cli` vs `brs-desktop` disagree on plain Task field-sync completion
+
+**Status:** open, not yet investigated further.
+
+`AsyncTask.spec.bs` — a plain (non-`@SGNode`) suite that starts a Task and polls its `result` field
+with `assertAsyncField`/`wait()` — does not hang on either runtime, but they disagree on the
+outcome: **PASS** under `brs-desktop`, **FAIL** under `brs-cli`. The Task worker spawns in both
+cases; `brs-cli` just never observes `result` change to `"done"` within the timeout.
+
+#### 2. `brs-cli`'s explicit-file invocation doesn't load rooibos test suites (resolved)
+
+Running `brs-cli --root build source/Main.brs` throws a type-mismatch trying to run
+`RuntimeConfig.getTestSuiteClassWithName()`, because `--root <dir> <entryFile>` only loads the
+file(s) you name plus whatever a component's `<script>` tags pull in — it doesn't replicate real
+Roku's "every `.brs` under `source/` is global scope" behavior, so rooibos's generated test-suite
+classes (plain global functions with no owning component) are invisible.
+
+**Already fixed upstream, not yet released:** `lvcabral/brs-engine` commit `7839671e` makes
+`brs-cli --root <dir>` (no entry file) scan `source/` recursively and run a real full-app load.
+Verified locally against a HEAD build.
+
+**Workaround used here:** run from a `.zip` package instead (`npm run test:brs`) — zips are loaded
+as complete apps with no root/entry-file distinction, so this sidesteps the gap entirely rather
+than working around it, and isn't something to unwind later.
+
+#### 3. `brs-node`'s published npm package is missing `read.sh` (breaks `--debug`)
+
+`brs-cli --debug` (or the plain REPL) fails on macOS/zsh with:
 ```
 /bin/sh: <project>/node_modules/brs-node/bin/read.sh: No such file or directory
 The current environment doesn't support interactive reading from TTY.
 ```
+`brs-node` depends on `readline-sync`, which shells out to `read.sh` for synchronous terminal
+reads. The webpack bundle references it via `__dirname + '/read.sh'`, but the file itself never
+gets copied into `packages/node/bin/` at build time (present in `node_modules/readline-sync/lib/`
+but absent from `packages/node/package.json`'s `files` array).
 
-Root cause: `brs-node` depends on `readline-sync`, which shells out to a sidecar script
-(`read.sh` on POSIX, `read.ps1`/`read.cs.js` on Windows) bundled inside its own package to do
-synchronous raw terminal reads — confirmed present at
-`brs-engine/node_modules/readline-sync/lib/read.sh` in the source monorepo. The webpack bundle
-(`packages/node/bin/brs.node.js`) inlines the *logic* that references `__dirname + '/read.sh'`,
-but the actual helper script never gets copied into `packages/node/bin/` at build time, and
-`packages/node/package.json`'s `"files"` array (`["bin/", "assets/", "types/src/core/", "CHANGELOG.md"]`)
-doesn't reference it either — so it's absent from both the local build output and the published
-npm package. This breaks any interactive terminal input in `brs-cli` (REPL, Micro Debugger
-prompts) wherever `readline-sync` needs its shell-out fallback (observed on macOS/zsh).
+**Fix location:** add a copy step for `readline-sync`'s `read.sh`/`read.ps1`/`read.cs.js` into
+`packages/node/bin/` in brs-engine's Node package build.
 
-**Fix location:** `brs-engine/packages/node/webpack.config.js` (or equivalent build script) needs
-a copy step for `node_modules/readline-sync/lib/read.sh` (and the Windows equivalents) into
-`packages/node/bin/`, and `packages/node/package.json`'s `files` array needs updating if those
-aren't already under `bin/`.
+#### 4. (unreleased HEAD only) SceneGraph `Font` init can't find `common:/fonts/system-fonts.json`
 
-### 3. (unreleased HEAD only) SceneGraph `Font`/`initSystemFonts` can't find `common:/fonts/system-fonts.json`
-
-Not something we hit on the released `brs-node@2.2.0` — only surfaced while verifying finding #1's
-upstream fix by building `/Users/mpearce/redspace/roku/brs-engine` HEAD locally (both `npm run
-build -w brs-node` dev and `npm run release -w brs-node` production configs). Any SceneGraph node
-that triggers default-font registration (e.g. `RooibosScene`'s `Label`) crashes:
-```
-Exception [Error]: ENOENT: No such file or directory, open '/common:/fonts/system-fonts.json'
-    at initSystemFonts (brs-sg.node.js:10974:28)
-    at new Font (brs-sg.node.js:10914:9)
-    ...
-    at new Label (brs-sg.node.js:12821:14)
-```
-Reproduces identically regardless of `--root`-alone vs explicit-file invocation, and regardless of
-`cwd` when invoking `node .../brs.cli.js` directly — so unrelated to finding #1's fix, and looks
-like an in-progress/incomplete piece of whatever's currently at HEAD (`common:/` volume not
-populated with the fonts asset in this checkout state). Worth a fresh look before relying on a
-build past `e7cfd962` for testing.
-
-### 4. `@SGNode(...)`-annotated Rooibos suites hang forever because Promise `.then()` dispatch needs a tick that never comes
-
-**Status: reproduced under both `brs-cli` and `brs-desktop`; root cause confirmed by direct source
-reading (both brs-engine and rooibos-roku), not yet fixed.**
-
-**tl;dr:** every `.then()`/`.catch()`/`.finally()` in the BrightScript Promises library
-(`roku_modules/rooibos_promises/promises.brs`) schedules its callback via a `Timer` node
-(`rooibos_promises_internal_delay()` → `createObject("roSGNode", "Timer")`). Timer processing
-(`SGRoot.processTimers()`) only runs from `RoSGScreen.getNewEvents()`, which itself only runs when
-BrightScript code calls `wait()` on a message port. Rooibos's `@SGNode`-annotated ("node test")
-suites run their *entire* body — setup, the test method, and any `promises.chain(...).then(...)` —
-synchronously inside a single observer callback, itself invoked from one iteration of
-`TestRunner.bs::runNodeTest()`'s own `wait(0, port)` loop, and **that call never returns** to let
-the *next* iteration of that loop process the pending timer. The promise needs a tick to resolve;
-the only place that tick can run is the exact call stack blocked waiting on the promise. Circular,
-unbreakable deadlock — independent of whether real cross-thread Task work is involved at all.
-
-This is a minimized repro of a livelock originally found in a much larger production app (Bell
-Media's Crave Roku channel), where every `@async` test suite backed by a `@SGNode(...)`-annotated
-node hung indefinitely. The production suite (`CraveApiTests`, `@SGNode("CraveApi")`) hits this via
-a real network Task and `promises.chain(promise).then(sub(app) ... m.testSuite.done() ...)` — the
-Task genuinely completes its HTTP call on its own thread, but nothing can ever service the Timer
-that would deliver that result back into the suite's blocked call stack. Reproduced here with a
-two-file, dependency-free minimal case that needs no real Task work at all, since the deadlock is
-in the Promise/Timer plumbing every node-test test goes through regardless
-(`rooibos.Test.bs::run()` auto-resolves a deferred promise even for plain synchronous, non-`@async`
-tests — see below):
-
-- `src/components/tasks/AsyncTask/AsyncTask.xml` + `.bs` — trivial `Task`-extending component,
-  `functionName="doWork"`, `doWork()` just sets `m.top.result = "done"` (unused by this specific
-  repro path, but keeps the component a genuine Task type as `@SGNode(...)` requires).
-- `src/source/tests/SGNodeTask.spec.bs` — `@SGNode("AsyncTask")`-annotated suite with a single
-  trivially-`true` assertion:
-  ```brightscript
-  @SGNode("AsyncTask")
-  @suite("SGNodeTaskTests")
-  class SGNodeTaskTests extends tests.BaseTestSuite
-    @it("passes trivially while running as a Task node")
-    function _()
-      m.assertTrue(true)
-    end function
-  end class
-  ```
-
-**Symptom:** the suite's `It:` *header* line prints (`>>>>>> It: ...`), but the matching `<<<< END
-It:` never does — no pass/fail, no `[Rooibos Result]`, no crash, just silence. Confirmed hung (not
-just slow) under both `brs-cli` and `brs-desktop` (brs-desktop's own watchdog eventually kills and
-relaunches the whole app after ~78s, which just repeats the hang from scratch). A completely
-non-`@SGNode`, plain-suite version using the idiomatic `observeFieldScoped` + `m.done()` async
-pattern (`AsyncTask.spec.bs`) does **not** reproduce this — it's specifically the
-suite-runs-as-a-node-test execution model that triggers it.
-
-**Confirmed root cause, traced end to end through both codebases:**
-
-1. `TestGroup.bs::runNextAsync()` — for *any* node-test suite (`m.testSuite.isNodeTest = true`),
-   every individual test, `@async` or not, goes through
-   `rooibos.promises.chain(test.deferred, ...).then(...).catch(...).finally(...)` (line ~162).
-2. `rooibos.Test.bs::run()` (lines 76–80) — for a plain synchronous test, this correctly
-   auto-resolves: `rooibos.promises.resolve(invalid, m.deferred)`. So far so good — the promise
-   *is* resolved.
-3. But resolving a promise doesn't invoke its `.then()` synchronously. Every `.then()`/`.catch()`/
-   `.finally()` in `roku_modules/rooibos_promises/promises.brs` is dispatched via
-   `rooibos_promises_internal_delay()` (line 661), which does
-   `timer = createObject("roSGNode", "Timer")` and schedules the callback for ~0.1ms later —
-   i.e. "next tick," by design.
-4. That "next tick" is `SGRoot.processTimers()`, called only from
-   `RoSGScreen.getNewEvents()` (`brs-engine/src/extensions/scenegraph/components/RoSGScreen.ts`),
-   which itself is only invoked when BrightScript code calls `wait()`/`GetMessage()` on the
-   screen's message port.
-5. `TestRunner.bs::runNodeTest()` creates the node, sets `node.rooibosRunSuite = true` (an
-   `observeFieldScoped` field, dispatched asynchronously — *itself* delivered on the *next*
-   `wait(0, port)` iteration of `runNodeTest()`'s own loop), then enters
-   `while true: event = wait(0, port): ... end while` waiting for the node's `rooibosTestResult`
-   field to change.
-6. The generated `rooibosRunSuite()` handler that fires from that field-observer callback runs the
-   *entire* suite — `Rooibos_TestRunner(...)`, `testSuite.run()`, all the way down into step 1's
-   `promises.chain(...).then(...)` registration — **synchronously, in one call**, without ever
-   calling `wait()` itself.
-
-Put together: the Timer scheduled in step 3 can only fire via a `wait()`-driven tick (step 4), but
-the only `wait()` loop in the picture (`runNodeTest()`'s, step 5) is one level up the call stack
-from the code that's blocking on that Timer's result (step 6) — and that call never returns to let
-the loop iterate again. The promise needs a tick to resolve; the only place that tick can run is
-the exact call stack the promise is blocking. This reproduces with a trivially-synchronous
-assertion because it doesn't require real async Task work to trigger — merely going through
-Rooibos's node-test/Promise machinery at all is sufficient. Confirmed independently on the
-brs-engine side too: `SGRoot.processTasks()` (Task activation/message processing) is *also* only
-reachable from this same `RoSGScreen.getNewEvents()` call, so any genuinely async Task work
-(like the production repro's real network call) would be starved by the identical mechanism even
-if the Promise/Timer indirection weren't involved.
-
-**Confirmed NOT the cause:** Rooibos's `catchCrashes` config option — disabling it in the original
-production-app repro made no difference, and this minimal repro doesn't set it at all. Also ruled
-out along the way: `RoSGNode.getScene()`'s cross-thread rendezvous (returns correctly, and this
-particular suite never leaves the render thread in the first place — confirmed via
-`shouldRendezvous()`/`sgRoot.threadId` instrumentation), and a suspected `Task.ts` address-identity
-mismatch for `type:"node"` cross-thread writes (real, and still worth a look for cases with
-genuinely separate Task threads exchanging node references, but not what causes *this* specific
-hang).
-
-Diagnostic instrumentation was added directly to a local `brs-engine` checkout
-(`~/redspace/roku/brs-engine`, `Task.ts`/`SGRoot.ts`/`RoSGNode.ts`, search for `DIAG`) to gather
-this evidence; not yet reverted.
+Only seen while verifying finding 2's fix on a HEAD build past `e7cfd962`. Any node that triggers
+default-font registration (e.g. a `Label`) crashes with `ENOENT: .../common:/fonts/system-fonts.json`.
+Reproduces regardless of invocation mode — looks like an in-progress/incomplete asset-mounting
+change at that point in history, unrelated to finding 2.
