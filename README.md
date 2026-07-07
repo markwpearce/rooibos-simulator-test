@@ -215,3 +215,45 @@ both were observed and may compound. Diagnostic instrumentation was added direct
 
 **Confirmed NOT the cause:** Rooibos's `catchCrashes` config option — disabling it in the original
 production-app repro made no difference, and this minimal repro doesn't set it at all.
+
+**Update — a second, distinct mechanism found while narrowing this down with the minimal repro.**
+More targeted instrumentation (logging every `getScene()` call, and every `control="run"`/
+`checkTaskRun()` worker-spawn event, with thread id + node address) on this minimal repro revealed
+something that doesn't fit the "two Task threads racing" story above:
+
+- `m.top.getScene()`, called from inside the generated `rooibosRunSuite()` handler, executes with
+  `sgRoot.threadId=0` (i.e. on the *render* thread, not a separate Task worker) and returns
+  successfully (`shouldRendezvous()` is `false`, so it just returns the already-known local scene —
+  no cross-thread call even attempted). So for this `@SGNode` suite, at least the initial
+  suite-setup-and-run phase is **not actually running on a separate OS thread** at the point the
+  `It:` assertion executes and prints — contrary to what "runs as an instance of the Task node
+  type" would suggest.
+- The *actual* Task-worker spawn we see in the log (`[task:api] Calling Task worker: 1,
+  AsyncTask`) turns out to be a **delayed, unrelated event**: instrumenting `setControlField()`
+  (fires when `control` is set to `"run"`) shows exactly one `control="run"` event for the *entire*
+  run, timestamped during the earlier, separate `AsyncTaskTests` suite (the plain
+  `observeFieldScoped` one) — and the corresponding `checkTaskRun()` worker-spawn (`postMessage`)
+  for that *same node address* doesn't fire until partway through the third suite
+  (`SGNodeTaskTests`), two suites later. `SGNodeTaskTests`'s own node never triggers a
+  `control="run"` event at all in the captured log.
+- Root cause of *that* delay, confirmed by reading the source directly: `SGRoot.processTasks()`
+  (which calls `checkTaskRun()`/`processThreadUpdate()` for every active Task) is only invoked from
+  `RoSGScreen.getNewEvents()` — i.e. **only when the interpreter yields control via a `wait()` call
+  on the screen's message port.** Any code path that runs a long synchronous stretch of
+  BrightScript without hitting a `wait()` starves *all* Task processing for its entire duration,
+  regardless of which thread(s) are conceptually involved. A Task created and started inside one
+  test method has no guarantee its worker will even be spawned before that test method returns.
+
+This is a real, independently-confirmed architectural gap (cooperative scheduling tied to explicit
+`wait()` yield points, rather than Tasks progressing independently the way they do against real
+Roku's genuine OS threads) — but it does **not** yet fully explain why `SGNodeTaskTests` itself
+hangs, since its own node/thread never shows up going through the instrumented `control="run"` →
+`checkTaskRun()` path at all. Two candidate explanations remain open: either `@SGNode` node-test
+activation uses a different code path than the normal `control="run"` flow (not yet located), or
+the hang is a blocking `Atomics.wait()` (confirmed: `SharedObject.waitVersion()` →
+`Atomics.wait()`, a true OS-level block, not a cooperative yield) called from a thread that is
+*also* solely responsible for eventually delivering the value it's blocking on — which would be a
+genuine, unrecoverable self-deadlock distinct from the address-mismatch theory above, and would
+explain why this specific case never resolves no matter how long you wait, while a busier app
+(like the original production repro) might merely appear "very slow" for cases that don't hit the
+same self-wait.
