@@ -1,9 +1,8 @@
 namespace tests
 
   ' Plain (non-@SGNode) Task completion check: start a Task, poll its "result" field with
-  ' assertAsyncField/wait() until it changes. Does not hang on either runtime, but the two
-  ' disagree on the outcome: PASSes under brs-desktop, FAILs under brs-cli (see README
-  ' finding "brs-cli vs brs-desktop disagree on plain Task field-sync completion").
+  ' assertAsyncField/wait() until it changes. FAILed under brs-cli on brs-node 2.2.0 while
+  ' PASSing under brs-desktop; PASSes under brs-cli as of brs-node 2.6.0 (README finding 2).
   @suite
   class AsyncTaskTests extends tests.BaseTestSuite
 

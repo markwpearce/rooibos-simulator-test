@@ -15,8 +15,8 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "brighterscript": "^0.72.5",
-    "brs-node": "^2.2.0",
-    "rooibos-roku": "^5.16.4"
+    "brighterscript": "^0.73.5",
+    "brs-node": "^2.6.0",
+    "rooibos-roku": "^5.17.0"
   }
 }
