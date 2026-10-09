@@ -38,7 +38,8 @@ node -e "
 const { RokuDeploy } = require('roku-deploy');
 new RokuDeploy().publish({ host: '127.0.0.1', password: 'rokudev', outDir: './out', outFile: 'rooibos-tests' })
 "
-# then POST http://127.0.0.1:8060/launch/dev and read results from telnet 127.0.0.1:8085
+# the app launches on sideload; read results from telnet 127.0.0.1:8085
+# (connect before sideloading, or you'll miss the start of the output)
 ```
 
 To run on a **real Roku device**, use the `Roku Device: Debug Rooibos Tests` VS Code launch config
@@ -59,9 +60,9 @@ To run on a **real Roku device**, use the `Roku Device: Debug Rooibos Tests` VS 
 ## Findings
 
 **Current state (brs-node 2.6.0, brighterscript 0.73.5, rooibos-roku 5.17.0):** all 8 tests pass
-under `brs-cli`, including the `@SGNode` and Task suites. Each finding below was reproduced on
-brs-node 2.2.0 and re-checked on 2.6.0. Only finding 3 still reproduces, and it doesn't affect
-the zip-based workflow.
+under `brs-cli`, `brs-desktop` and a real Roku device, including the `@SGNode` and Task suites.
+Each finding below was reproduced on brs-node 2.2.0 and re-checked on 2.6.0. Only finding 3 still
+reproduces, and it doesn't affect the zip-based workflow.
 
 ### 1. `@SGNode(...)` suites deadlocked (resolved)
 
@@ -91,11 +92,11 @@ runs when BrightScript calls `wait()`/`GetMessage()`. The only such loop
 never returned to it. So the promise needed a tick that could only come from the call stack it
 was blocking.
 
-### 2. `brs-cli` and `brs-desktop` disagreed on plain Task field-sync completion (resolved for `brs-cli`)
+### 2. `brs-cli` and `brs-desktop` disagreed on plain Task field-sync completion (resolved)
 
-**Status:** `AsyncTask.spec.bs` now passes under `brs-cli` 2.6.0. On 2.2.0 it failed under
-`brs-cli` (the Task's `result` field never showed as `"done"` before the timeout) but passed
-under `brs-desktop`. I haven't re-checked brs-desktop against this upgrade.
+**Status:** `AsyncTask.spec.bs` now passes under `brs-cli` 2.6.0, `brs-desktop` and a real device.
+On 2.2.0 it failed under `brs-cli` (the Task's `result` field never showed as `"done"` before the
+timeout) but passed under `brs-desktop`.
 
 ### 3. `brs-cli`'s explicit-file invocation doesn't load rooibos test suites (still reproduces)
 
