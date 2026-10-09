@@ -2,10 +2,9 @@ import "pkg:/source/tests/BaseTestSuite.spec.bs"
 
 namespace tests
 
-  ' Minimal @SGNode repro: the suite runs as an instance of the given node type (here, a
-  ' Task). Even this fully synchronous test deadlocked on brs-node 2.2.0, because rooibos
-  ' dispatches each test's Promise .then() via a Timer that was never ticked (README
-  ' finding 1). PASSes as of brs-node 2.6.0.
+  ' Minimal @SGNode suite: runs as an instance of the given node type (here, a Task). Every
+  ' test in a node suite goes through a Promise whose .then() is dispatched via a Timer, so
+  ' this exercises Timer ticking from inside a node test.
   @SGNode("AsyncTask")
   @suite("SGNodeTaskTests")
   class SGNodeTaskTests extends tests.BaseTestSuite
